@@ -216,3 +216,63 @@ func TestEnsureMCIngress(t *testing.T) {
 		t.Errorf("Ingress.Annotation %q = %q, want %q", igAnnotationKey, val, wantVal)
 	}
 }
+
+func TestMultiIngressLB(t *testing.T) {
+	lbc := newLoadBalancerController()
+
+	svc := test.NewService(types.NamespacedName{Name: "my-service", Namespace: "default"}, api_v1.ServiceSpec{
+		Type:  api_v1.ServiceTypeNodePort,
+		Ports: []api_v1.ServicePort{{Port: 80}},
+	})
+	addService(lbc, svc)
+
+	defaultBackend := backend("my-service", intstr.FromInt(80))
+	// Add first ingress
+	ing1 := test.NewIngress(types.NamespacedName{Name: "my-ingress", Namespace: "default"},
+		extensions.IngressSpec{
+			Backend: &defaultBackend,
+		})
+	ing1.ObjectMeta.Annotations = map[string]string{
+		"kubernetes.io/ingress.class":             "gce",
+		"kubernetes.io/ingress.loadbalancer-name": "mylb",
+	}
+	addIngress(lbc, ing1)
+
+	ingStoreKey1 := getKey(ing1, t)
+	if err := lbc.sync(ingStoreKey1); err != nil {
+		t.Fatalf("lbc.sync(%v) = err %v", ingStoreKey1, err)
+	}
+
+	// Add second ingress
+	ing2 := test.NewIngress(types.NamespacedName{Name: "my-ingress2", Namespace: "default"},
+		extensions.IngressSpec{
+			Backend: &defaultBackend,
+		})
+	ing2.ObjectMeta.Annotations = map[string]string{
+		"kubernetes.io/ingress.class":             "gce",
+		"kubernetes.io/ingress.loadbalancer-name": "mylb",
+	}
+	addIngress(lbc, ing2)
+
+	ingStoreKey2 := getKey(ing2, t)
+	if err := lbc.sync(ingStoreKey2); err != nil {
+		t.Fatalf("lbc.sync(%v) = err %v", ingStoreKey2, err)
+	}
+
+	updatedIng1, _ := lbc.ctx.KubeClient.ExtensionsV1beta1().Ingresses(ing1.Namespace).Get(ing1.Name, meta_v1.GetOptions{})
+	updatedIng2, _ := lbc.ctx.KubeClient.ExtensionsV1beta1().Ingresses(ing2.Namespace).Get(ing2.Name, meta_v1.GetOptions{})
+
+	if updatedIng1.Status.LoadBalancer.Ingress[0].IP != updatedIng2.Status.LoadBalancer.Ingress[0].IP {
+		t.Error("Ingresses with the same LB should have 1 IP")
+	}
+
+	lbName1, _ := lbc.GetLoadBalancerName(ing1)
+	lbName2, _ := lbc.GetLoadBalancerName(ing2)
+	if lbName1 != lbName2 {
+		t.Errorf("Ingresses must have equal lb name, but lb1: %+v, lb2: %+v", lbName1, lbName2)
+	}
+
+	// TODO: add check for url map
+	//lb, _ := lbc.l7Pool.Get(lbName1)
+	//t.Errorf("lb host rules: %+v", lb.UrlMap().HostRules)
+}

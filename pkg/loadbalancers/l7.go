@@ -55,7 +55,7 @@ type L7RuntimeInfo struct {
 	// TLSName is the name of the preshared cert to use. Multiple certs can be specified as a comma-separated string
 	TLSName string
 	// Ingress is the processed Ingress API object.
-	Ingress *extensions.Ingress
+	IngressList *extensions.IngressList
 	// ManagedCertificates is a comma-separated list of managed SSL certificates to use.
 	ManagedCertificates string
 	// AllowHTTP will not setup :80, if TLS is nil and AllowHTTP is set,

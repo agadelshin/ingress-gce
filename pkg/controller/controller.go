@@ -295,20 +295,21 @@ func (lbc *LoadBalancerController) SyncBackends(state interface{}) error {
 	}
 
 	// TODO: Remove this after deprecation
-	ing := syncState.ing
-	if utils.IsGCEMultiClusterIngress(syncState.ing) {
-		// Add instance group names as annotation on the ingress and return.
-		if ing.Annotations == nil {
-			ing.Annotations = map[string]string{}
+	for _, ing := range syncState.ingList.Items {
+		if utils.IsGCEMultiClusterIngress(&ing) {
+			// Add instance group names as annotation on the ingress and return.
+			if ing.Annotations == nil {
+				ing.Annotations = map[string]string{}
+			}
+			if err = setInstanceGroupsAnnotation(ing.Annotations, igs); err != nil {
+				return err
+			}
+			if err = updateAnnotations(lbc.ctx.KubeClient, ing.Name, ing.Namespace, ing.Annotations); err != nil {
+				return err
+			}
+			// This short-circuit will stop the syncer from moving to next step.
+			return ingsync.ErrSkipBackendsSync
 		}
-		if err = setInstanceGroupsAnnotation(ing.Annotations, igs); err != nil {
-			return err
-		}
-		if err = updateAnnotations(lbc.ctx.KubeClient, ing.Name, ing.Namespace, ing.Annotations); err != nil {
-			return err
-		}
-		// This short-circuit will stop the syncer from moving to next step.
-		return ingsync.ErrSkipBackendsSync
 	}
 
 	// Sync the backends
@@ -372,7 +373,9 @@ func (lbc *LoadBalancerController) SyncLoadBalancer(state interface{}) error {
 		return fmt.Errorf("expected state type to be syncState, type was %T", state)
 	}
 
-	lb, err := lbc.toRuntimeInfo(syncState.ing, syncState.urlMap)
+	lbName, err := lbc.GetLoadBalancerName(&syncState.ingList.Items[0])
+
+	lb, err := lbc.toRuntimeInfo(lbName, syncState.ingList, syncState.urlMap)
 	if err != nil {
 		return err
 	}
@@ -408,18 +411,20 @@ func (lbc *LoadBalancerController) PostProcess(state interface{}) error {
 	}
 
 	// Get the loadbalancer and update the ingress status.
-	ing := syncState.ing
-	k, err := utils.KeyFunc(ing)
+	ingList := syncState.ingList
+	k, err := lbc.GetLoadBalancerName(&ingList.Items[0])
 	if err != nil {
-		return fmt.Errorf("cannot get key for Ingress %s/%s: %v", ing.Namespace, ing.Name, err)
+		return err
 	}
 
 	l7, err := lbc.l7Pool.Get(k)
 	if err != nil {
 		return fmt.Errorf("unable to get loadbalancer: %v", err)
 	}
-	if err := lbc.updateIngressStatus(l7, ing); err != nil {
-		return fmt.Errorf("update ingress status error: %v", err)
+	for _, ing := range ingList.Items {
+		if err := lbc.updateIngressStatus(l7, &ing); err != nil {
+			return fmt.Errorf("update ingress status error: %v", err)
+		}
 	}
 	return nil
 }
@@ -439,7 +444,10 @@ func (lbc *LoadBalancerController) sync(key string) error {
 	}
 	// gceSvcPorts contains the ServicePorts used by only single-cluster ingress.
 	gceSvcPorts := lbc.ToSvcPorts(&gceIngresses)
-	lbNames := lbc.ingLister.Store.ListKeys()
+	lbNames, err := lbc.ingLister.ListLBs()
+	if err != nil {
+		return err
+	}
 	gcState := &gcState{lbNames, gceSvcPorts}
 
 	obj, ingExists, err := lbc.ingLister.Store.GetByKey(key)
@@ -456,12 +464,25 @@ func (lbc *LoadBalancerController) sync(key string) error {
 	}
 	ing = ing.DeepCopy()
 
-	// Bootstrap state for GCP sync.
-	urlMap, errs := lbc.Translator.TranslateIngress(ing, lbc.ctx.DefaultBackendSvcPortID)
-	syncState := &syncState{urlMap, ing}
+	lbName, err := lbc.GetLoadBalancerName(ing)
+	if err != nil {
+		return err
+	}
+
+	ingList, err := lbc.ingLister.ListLBIngresses(lbName)
+	if err != nil {
+		return err
+	}
+
+	if len(ingList.Items) == 0 {
+		ingList.Items = append(ingList.Items, *ing)
+	}
+
+	urlMap, errs := lbc.Translator.TranslateIngressList(&ingList, lbc.ctx.DefaultBackendSvcPortID)
+	syncState := &syncState{urlMap, &ingList}
 	if errs != nil {
 		msg := fmt.Errorf("error while evaluating the ingress spec: %v", utils.JoinErrs(errs))
-		lbc.ctx.Recorder(ing.Namespace).Eventf(ing, apiv1.EventTypeWarning, "Translate", msg.Error())
+		lbc.ctx.Recorder(ing.Namespace).Eventf(&ingList, apiv1.EventTypeWarning, "Translate", msg.Error())
 		return msg
 	}
 
@@ -484,7 +505,7 @@ func (lbc *LoadBalancerController) sync(key string) error {
 // updateIngressStatus updates the IP and annotations of a loadbalancer.
 // The annotations are parsed by kubectl describe.
 func (lbc *LoadBalancerController) updateIngressStatus(l7 *loadbalancers.L7, ing *extensions.Ingress) error {
-	ingClient := lbc.ctx.KubeClient.Extensions().Ingresses(ing.Namespace)
+	ingClient := lbc.ctx.KubeClient.ExtensionsV1beta1().Ingresses(ing.Namespace)
 
 	// Update IP through update/status endpoint
 	ip := l7.GetIP()
@@ -523,26 +544,22 @@ func (lbc *LoadBalancerController) updateIngressStatus(l7 *loadbalancers.L7, ing
 }
 
 // toRuntimeInfo returns L7RuntimeInfo for the given ingress.
-func (lbc *LoadBalancerController) toRuntimeInfo(ing *extensions.Ingress, urlMap *utils.GCEURLMap) (*loadbalancers.L7RuntimeInfo, error) {
-	k, err := utils.KeyFunc(ing)
-	if err != nil {
-		return nil, fmt.Errorf("cannot get key for Ingress %v/%v: %v", ing.Namespace, ing.Name, err)
-	}
-
+func (lbc *LoadBalancerController) toRuntimeInfo(k string, ing *extensions.IngressList, urlMap *utils.GCEURLMap) (*loadbalancers.L7RuntimeInfo, error) {
+	annotations := annotations.FromIngress(&ing.Items[0])
 	var tls []*loadbalancers.TLSCerts
+	var err error
 
-	annotations := annotations.FromIngress(ing)
 	// Load the TLS cert from the API Spec if it is not specified in the annotation.
 	// TODO: enforce this with validation.
 	if annotations.UseNamedTLS() == "" {
-		tls, err = lbc.tlsLoader.Load(ing)
+		tls, err = lbc.tlsLoader.Load(&ing.Items[0])
 		if err != nil {
 			if apierrors.IsNotFound(err) {
 				// TODO: this path should be removed when external certificate managers migrate to a better solution.
 				const msg = "Could not find TLS certificates. Continuing setup for the load balancer to serve HTTP. Note: this behavior is deprecated and will be removed in a future version of ingress-gce"
-				lbc.ctx.Recorder(ing.Namespace).Eventf(ing, apiv1.EventTypeWarning, "Sync", msg)
+				lbc.ctx.Recorder(ing.Items[0].Namespace).Eventf(ing, apiv1.EventTypeWarning, "Sync", msg)
 			} else {
-				glog.Errorf("Could not get certificates for ingress %s/%s: %v", ing.Namespace, ing.Name, err)
+				glog.Errorf("Could not get certificates for ingress %s/%s: %v", ing.Items[0].Namespace, ing.Items[0].Name, err)
 				return nil, err
 			}
 		}
@@ -552,7 +569,7 @@ func (lbc *LoadBalancerController) toRuntimeInfo(ing *extensions.Ingress, urlMap
 		Name:                k,
 		TLS:                 tls,
 		TLSName:             annotations.UseNamedTLS(),
-		Ingress:             ing,
+		IngressList:         ing,
 		ManagedCertificates: annotations.ManagedCertificates(),
 		AllowHTTP:           annotations.AllowHTTP(),
 		StaticIPName:        annotations.StaticIPName(),
@@ -585,4 +602,18 @@ func (lbc *LoadBalancerController) ToSvcPorts(ings *extensions.IngressList) []ut
 		knownPorts = append(knownPorts, urlMap.AllServicePorts()...)
 	}
 	return knownPorts
+}
+
+func (lbc *LoadBalancerController) GetLoadBalancerName(ing *extensions.Ingress) (string, error) {
+	annotations := annotations.FromIngress(ing)
+	lbName := annotations.LoadBalancerName()
+
+	if lbName == "" {
+		k, err := utils.KeyFunc(ing)
+		if err != nil {
+			return "", fmt.Errorf("cannot get key for Ingress %v/%v: %v", ing.Namespace, ing.Name, err)
+		}
+		return k, nil
+	}
+	return lbName, nil
 }

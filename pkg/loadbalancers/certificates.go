@@ -127,7 +127,7 @@ func (l *L7) getSslCertificates(names []string) ([]*compute.SslCertificate, erro
 		cert, err := l.cloud.GetSslCertificate(name)
 		if err != nil {
 			failedCerts = append(failedCerts, name+": "+err.Error())
-			l.recorder.Eventf(l.runtimeInfo.Ingress, corev1.EventTypeNormal, SslCertificateMissing, err.Error())
+			l.recorder.Eventf(l.runtimeInfo.IngressList, corev1.EventTypeNormal, SslCertificateMissing, err.Error())
 			continue
 		}
 		if cert == nil {
@@ -159,7 +159,7 @@ func (l *L7) getManagedCertificates() ([]*compute.SslCertificate, bool, error) {
 
 	sel := labels.NewSelector()
 	sel.Add(*req)
-	mcrts, err := l.mcrt.ManagedCertificates(l.runtimeInfo.Ingress.Namespace).List(sel)
+	mcrts, err := l.mcrt.ManagedCertificates(l.runtimeInfo.IngressList.Items[0].Namespace).List(sel)
 	if err != nil {
 		return nil, true, err
 	}

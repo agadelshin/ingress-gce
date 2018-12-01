@@ -30,6 +30,6 @@ type gcState struct {
 
 // syncState is used by the controller to maintain state for routines that sync GCP resources of an Ingress.
 type syncState struct {
-	urlMap *utils.GCEURLMap
-	ing    *extensions.Ingress
+	urlMap  *utils.GCEURLMap
+	ingList *extensions.IngressList
 }

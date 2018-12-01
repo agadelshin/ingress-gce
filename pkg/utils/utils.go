@@ -26,7 +26,7 @@ import (
 
 	"github.com/golang/glog"
 
-	"google.golang.org/api/compute/v1"
+	compute "google.golang.org/api/compute/v1"
 	"google.golang.org/api/googleapi"
 	api_v1 "k8s.io/api/core/v1"
 	extensions "k8s.io/api/extensions/v1beta1"
@@ -36,6 +36,7 @@ import (
 	"k8s.io/ingress-gce/pkg/annotations"
 	"k8s.io/ingress-gce/pkg/flags"
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce/cloud"
+	"k8s.io/kubernetes/pkg/util/slice"
 )
 
 const (
@@ -304,6 +305,43 @@ func (s *StoreToIngressLister) ListGCEIngresses() (ing extensions.IngressList, e
 	for _, m := range s.Store.List() {
 		newIng := m.(*extensions.Ingress)
 		if IsGCEIngress(newIng) {
+			ing.Items = append(ing.Items, *newIng)
+		}
+	}
+	return ing, nil
+}
+
+func (s *StoreToIngressLister) ListLBs() (lbNames []string, err error) {
+	for _, k := range s.Store.ListKeys() {
+		obj, ok, err := s.Store.GetByKey(k)
+		if !ok {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		ing := obj.(*extensions.Ingress)
+		if IsGCEIngress(ing) {
+			ann := annotations.FromIngress(ing)
+			lbName := ann.LoadBalancerName()
+			if lbName != "" {
+				if slice.ContainsString(lbNames, lbName, nil) {
+					continue
+				}
+				lbNames = append(lbNames, lbName)
+				continue
+			}
+		}
+		lbNames = append(lbNames, k)
+	}
+	return lbNames, nil
+}
+
+func (s *StoreToIngressLister) ListLBIngresses(lbName string) (ing extensions.IngressList, err error) {
+	for _, m := range s.Store.List() {
+		newIng := m.(*extensions.Ingress)
+		annotations := annotations.FromIngress(newIng)
+		if annotations.LoadBalancerName() == lbName && IsGCEIngress(newIng) {
 			ing.Items = append(ing.Items, *newIng)
 		}
 	}

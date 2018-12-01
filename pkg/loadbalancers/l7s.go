@@ -74,7 +74,7 @@ func (l *L7s) Sync(ri *L7RuntimeInfo) error {
 			cloud:       l.cloud,
 			namer:       l.namer,
 			mcrt:        l.mcrt,
-			recorder:    l.recorderProducer.Recorder(ri.Ingress.Namespace),
+			recorder:    l.recorderProducer.Recorder(ri.IngressList.Items[0].Namespace),
 		}
 	} else {
 		if !reflect.DeepEqual(lb.runtimeInfo, ri) {
