@@ -99,6 +99,7 @@ func (b *Backends) Create(sp utils.ServicePort, hcLink string) (*composite.Backe
 	if err := composite.CreateBackendService(be, b.cloud); err != nil {
 		return nil, err
 	}
+
 	b.snapshotter.Add(name, be)
 	// Note: We need to perform a GCE call to re-fetch the object we just created
 	// so that the "Fingerprint" field is filled in. This is needed to update the

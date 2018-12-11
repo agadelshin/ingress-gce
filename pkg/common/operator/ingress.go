@@ -5,8 +5,11 @@ import (
 
 	backendconfigv1beta1 "k8s.io/ingress-gce/pkg/apis/backendconfig/v1beta1"
 
+	"encoding/json"
+
 	api_v1 "k8s.io/api/core/v1"
 	extensions "k8s.io/api/extensions/v1beta1"
+	"k8s.io/ingress-gce/pkg/annotations"
 )
 
 // Ingresses returns the wrapper
@@ -33,6 +36,20 @@ func (op *IngressesOperator) Filter(f func(*extensions.Ingress) bool) *Ingresses
 	for _, ing := range op.i {
 		if f(ing) {
 			i = append(i, ing)
+		}
+	}
+	return Ingresses(i)
+}
+
+func (op *IngressesOperator) ReferencesNode(node *api_v1.Node, backend string) *IngressesOperator {
+	dupes := map[string]bool{}
+
+	var i []*extensions.Ingress
+	for _, ing := range op.i {
+		key := fmt.Sprintf("%s/%s", ing.Namespace, ing.Name)
+		if doesIngressReferenceNode(ing, node, backend) && !dupes[key] {
+			i = append(i, ing)
+			dupes[key] = true
 		}
 	}
 	return Ingresses(i)
@@ -69,4 +86,16 @@ func (op *IngressesOperator) ReferencesBackendConfig(beConfig *backendconfigv1be
 		}
 	}
 	return Ingresses(i)
+}
+
+func doesIngressReferenceNode(ing *extensions.Ingress, node *api_v1.Node, backend string) bool {
+	backendState := map[string]string{}
+	json.Unmarshal([]byte(ing.Annotations[fmt.Sprintf("%v/backends", annotations.StatusPrefix)]), &backendState)
+
+	for be, _ := range backendState {
+		if be == backend {
+			return true
+		}
+	}
+	return false
 }

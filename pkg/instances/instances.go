@@ -252,6 +252,28 @@ func (i *Instances) Remove(groupName string, names []string) error {
 	return fmt.Errorf("%v", errs)
 }
 
+func (i *Instances) GetNodeInstanceGroup(node string) (*compute.InstanceGroup, error) {
+	pool := i.snapshotter.Snapshot()
+
+	for igName := range pool {
+		gceNodes, err := i.list(igName)
+		if err != nil {
+			return nil, err
+		}
+		if gceNodes.Has(node) {
+			zone, err := i.GetZoneForNode(node)
+			if err != nil {
+				return nil, err
+			}
+			if ig, err := i.Get(igName, zone); err == nil && ig != nil {
+				return ig, nil
+			}
+
+		}
+	}
+	return nil, nil
+}
+
 // Sync syncs kubernetes instances with the instances in the instance group.
 func (i *Instances) Sync(nodes []string) (err error) {
 	glog.V(4).Infof("Syncing nodes %v", nodes)

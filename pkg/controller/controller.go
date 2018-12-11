@@ -43,6 +43,7 @@ import (
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce/cloud/meta"
 
 	"k8s.io/ingress-gce/pkg/annotations"
+	"k8s.io/ingress-gce/pkg/composite"
 	"k8s.io/ingress-gce/pkg/context"
 	"k8s.io/ingress-gce/pkg/controller/translator"
 	"k8s.io/ingress-gce/pkg/loadbalancers"
@@ -213,6 +214,61 @@ func NewLoadBalancerController(
 			},
 		})
 	}
+
+	ctx.NodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: func(obj interface{}) {
+			var nodeBackend string
+			node := obj.(*apiv1.Node)
+			ig, _ := instancePool.GetNodeInstanceGroup(node.Name)
+			backendServiceList, _ := backendPool.List()
+			for _, backendService := range backendServiceList {
+				bs := backendService.(*composite.BackendService)
+				for _, backend := range bs.Backends {
+					if backend.Group == ig.Name {
+						nodeBackend = bs.Name
+					}
+				}
+			}
+
+			ings := operator.Ingresses(ctx.Ingresses().List()).ReferencesNode(node, nodeBackend).AsList()
+			lbc.ingQueue.Enqueue(convert(ings)...)
+		},
+		UpdateFunc: func(old, cur interface{}) {
+			if !reflect.DeepEqual(old, cur) {
+				var nodeBackend string
+				node := cur.(*apiv1.Node)
+				ig, _ := instancePool.GetNodeInstanceGroup(node.Name)
+				backendServiceList, _ := backendPool.List()
+				for _, backendService := range backendServiceList {
+					bs := backendService.(*composite.BackendService)
+					for _, backend := range bs.Backends {
+						if backend.Group == ig.Name {
+							nodeBackend = bs.Name
+						}
+					}
+				}
+
+				ings := operator.Ingresses(ctx.Ingresses().List()).ReferencesNode(node, nodeBackend).AsList()
+				lbc.ingQueue.Enqueue(convert(ings)...)
+			}
+		},
+		DeleteFunc: func(obj interface{}) {
+			var nodeBackend string
+			node := obj.(*apiv1.Node)
+			ig, _ := instancePool.GetNodeInstanceGroup(node.Name)
+			backendServiceList, _ := backendPool.List()
+			for _, backendService := range backendServiceList {
+				bs := backendService.(*composite.BackendService)
+				for _, backend := range bs.Backends {
+					if backend.Group == ig.Name {
+						nodeBackend = bs.Name
+					}
+				}
+			}
+			ings := operator.Ingresses(ctx.Ingresses().List()).ReferencesNode(node, nodeBackend).AsList()
+			lbc.ingQueue.Enqueue(convert(ings)...)
+		},
+	})
 
 	// Register health check on controller context.
 	ctx.AddHealthCheck("ingress", func() error {

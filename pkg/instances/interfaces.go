@@ -34,6 +34,7 @@ type NodePool interface {
 	// The following 2 methods operate on instance groups.
 	EnsureInstanceGroupsAndPorts(name string, ports []int64) ([]*compute.InstanceGroup, error)
 	DeleteInstanceGroup(name string) error
+	GetNodeInstanceGroup(node string) (*compute.InstanceGroup, error)
 
 	// TODO: Refactor for modularity
 	Add(groupName string, nodeNames []string) error
