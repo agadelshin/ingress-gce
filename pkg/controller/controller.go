@@ -43,7 +43,6 @@ import (
 	"k8s.io/kubernetes/pkg/cloudprovider/providers/gce/cloud/meta"
 
 	"k8s.io/ingress-gce/pkg/annotations"
-	"k8s.io/ingress-gce/pkg/composite"
 	"k8s.io/ingress-gce/pkg/context"
 	"k8s.io/ingress-gce/pkg/controller/translator"
 	"k8s.io/ingress-gce/pkg/loadbalancers"
@@ -215,60 +214,86 @@ func NewLoadBalancerController(
 		})
 	}
 
-	ctx.NodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc: func(obj interface{}) {
-			var nodeBackend string
-			node := obj.(*apiv1.Node)
-			ig, _ := instancePool.GetNodeInstanceGroup(node.Name)
-			backendServiceList, _ := backendPool.List()
-			for _, backendService := range backendServiceList {
-				bs := backendService.(*composite.BackendService)
-				for _, backend := range bs.Backends {
-					if backend.Group == ig.Name {
-						nodeBackend = bs.Name
-					}
-				}
-			}
-
-			ings := operator.Ingresses(ctx.Ingresses().List()).ReferencesNode(node, nodeBackend).AsList()
-			lbc.ingQueue.Enqueue(convert(ings)...)
-		},
-		UpdateFunc: func(old, cur interface{}) {
-			if !reflect.DeepEqual(old, cur) {
-				var nodeBackend string
-				node := cur.(*apiv1.Node)
-				ig, _ := instancePool.GetNodeInstanceGroup(node.Name)
-				backendServiceList, _ := backendPool.List()
-				for _, backendService := range backendServiceList {
-					bs := backendService.(*composite.BackendService)
-					for _, backend := range bs.Backends {
-						if backend.Group == ig.Name {
-							nodeBackend = bs.Name
-						}
-					}
-				}
-
-				ings := operator.Ingresses(ctx.Ingresses().List()).ReferencesNode(node, nodeBackend).AsList()
-				lbc.ingQueue.Enqueue(convert(ings)...)
-			}
-		},
-		DeleteFunc: func(obj interface{}) {
-			var nodeBackend string
-			node := obj.(*apiv1.Node)
-			ig, _ := instancePool.GetNodeInstanceGroup(node.Name)
-			backendServiceList, _ := backendPool.List()
-			for _, backendService := range backendServiceList {
-				bs := backendService.(*composite.BackendService)
-				for _, backend := range bs.Backends {
-					if backend.Group == ig.Name {
-						nodeBackend = bs.Name
-					}
-				}
-			}
-			ings := operator.Ingresses(ctx.Ingresses().List()).ReferencesNode(node, nodeBackend).AsList()
-			lbc.ingQueue.Enqueue(convert(ings)...)
-		},
-	})
+	//ctx.NodeInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+	//	AddFunc: func(obj interface{}) {
+	//		var nodeBackend string
+	//		node := obj.(*apiv1.Node)
+	//		glog.Infof("Add node %v", node.Name)
+	//		ig, err := instancePool.GetNodeInstanceGroup(node.Name)
+	//		if err != nil || ig == nil {
+	//			return
+	//		}
+	//
+	//		backendServiceList, _ := backendPool.List()
+	//		for _, backendService := range backendServiceList {
+	//			bs := backendService.(*compute.BackendService)
+	//			for _, backend := range bs.Backends {
+	//				if backend.Group == ig.Name {
+	//					nodeBackend = bs.Name
+	//				}
+	//			}
+	//		}
+	//
+	//		glog.Infof("node: %+v, ig: %+v, backend: %+v", node.Name, ig.Name, nodeBackend)
+	//		ings := operator.Ingresses(ctx.Ingresses().List()).ReferencesNode(node, nodeBackend).AsList()
+	//		lbc.ingQueue.Enqueue(convert(ings)...)
+	//	},
+	//	UpdateFunc: func(old, cur interface{}) {
+	//		node := cur.(*apiv1.Node)
+	//		glog.Infof("Update node %v", node.Name)
+	//		if !reflect.DeepEqual(old, cur) {
+	//			nodeBackend := ""
+	//			ig, err := instancePool.GetNodeInstanceGroup(node.Name)
+	//			if err != nil || ig == nil {
+	//				return
+	//			}
+	//			backendServiceList, _ := backendPool.List()
+	//			for _, backendService := range backendServiceList {
+	//				bs := backendService.(*compute.BackendService)
+	//				//glog.Infof("backendservice: %+v", bs)
+	//				for _, backend := range bs.Backends {
+	//					//glog.Infof("backend: %+v", backend)
+	//					group := filepath.Base(backend.Group)
+	//					if group == ig.Name {
+	//						nodeBackend = bs.Name
+	//						break
+	//					}
+	//					if nodeBackend != "" {
+	//						break
+	//					}
+	//				}
+	//			}
+	//
+	//			ings := operator.Ingresses(ctx.Ingresses().List()).ReferencesNode(node, nodeBackend).AsList()
+	//			for _, i := range ings {
+	//				glog.Infof("======= ingress %+v", i.Name)
+	//			}
+	//			//glog.Infof("node: %+v, ig: %+v, backend: %+v", node.Name, ig.Name, nodeBackend)
+	//			lbc.ingQueue.Enqueue(convert(ings)...)
+	//		}
+	//	},
+	//	DeleteFunc: func(obj interface{}) {
+	//		var nodeBackend string
+	//		node := obj.(*apiv1.Node)
+	//		glog.Infof("Delete node %v", node.Name)
+	//		ig, err := instancePool.GetNodeInstanceGroup(node.Name)
+	//		if err != nil || ig == nil {
+	//			return
+	//		}
+	//		backendServiceList, _ := backendPool.List()
+	//		for _, backendService := range backendServiceList {
+	//			bs := backendService.(*compute.BackendService)
+	//			for _, backend := range bs.Backends {
+	//				if backend.Group == ig.Name {
+	//					nodeBackend = bs.Name
+	//				}
+	//			}
+	//		}
+	//		glog.Infof("node: %+v, ig: %+v, backend: %+v", node.Name, ig.Name, nodeBackend)
+	//		ings := operator.Ingresses(ctx.Ingresses().List()).ReferencesNode(node, nodeBackend).AsList()
+	//		lbc.ingQueue.Enqueue(convert(ings)...)
+	//	},
+	//})
 
 	// Register health check on controller context.
 	ctx.AddHealthCheck("ingress", func() error {

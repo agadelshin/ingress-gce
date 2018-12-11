@@ -305,27 +305,32 @@ func GetNodeConditionPredicate() listers.NodeConditionPredicate {
 		// We add the master to the node list, but its unschedulable.  So we use this to filter
 		// the master.
 		if node.Spec.Unschedulable {
+			glog.Infof("UNSCHEDULABLE %+v", node.Name)
 			return false
 		}
 
 		// As of 1.6, we will taint the master, but not necessarily mark it unschedulable.
 		// Recognize nodes labeled as master, and filter them also, as we were doing previously.
 		if _, hasMasterRoleLabel := node.Labels[LabelNodeRoleMaster]; hasMasterRoleLabel {
+			glog.Infof("HAS MASTER ROLE %+v", node.Name)
 			return false
 		}
 
 		if _, hasExcludeBalancerLabel := node.Labels[LabelNodeRoleExcludeBalancer]; hasExcludeBalancerLabel {
+			glog.Infof("EXCLUDE BALANCER %+v", node.Name)
 			return false
 		}
 
 		// If we have no info, don't accept
 		if len(node.Status.Conditions) == 0 {
+			glog.Infof("ZERO NODE STATUS %+v", node.Name)
 			return false
 		}
 		for _, cond := range node.Status.Conditions {
 			// We consider the node for load balancing only when its NodeReady condition status
 			// is ConditionTrue
 			if cond.Type == api_v1.NodeReady && cond.Status != api_v1.ConditionTrue {
+				glog.Infof("IGNORING NODE %v with %v condition status %v", node.Name, cond.Type, cond.Status)
 				glog.V(4).Infof("Ignoring node %v with %v condition status %v", node.Name, cond.Type, cond.Status)
 				return false
 			}

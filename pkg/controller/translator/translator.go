@@ -196,11 +196,14 @@ func getZone(n *api_v1.Node) string {
 // GetZoneForNode returns the zone for a given node by looking up its zone label.
 func (t *Translator) GetZoneForNode(name string) (string, error) {
 	nodeLister := t.ctx.NodeInformer.GetIndexer()
+	//nodes, err := listers.NewNodeLister(nodeLister).List(labels.NewSelector())
 	nodes, err := listers.NewNodeLister(nodeLister).ListWithPredicate(utils.GetNodeConditionPredicate())
 	if err != nil {
 		return "", err
 	}
+	glog.Infof("GetZoneForNode need to find %+v", name)
 	for _, n := range nodes {
+		glog.Infof("node from GetZoneForNode %+v", n.Name)
 		if n.Name == name {
 			// TODO: Make this more resilient to label changes by listing
 			// cloud nodes and figuring out zone.
